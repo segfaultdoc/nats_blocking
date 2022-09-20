@@ -77,12 +77,16 @@ fn spawn_reader(store: Arc<Store>, exit: Arc<AtomicBool>) -> JoinHandle<()> {
     Builder::new()
         .name("reader-thread".to_string())
         .spawn(move || {
+            let now = std::time::Instant::now();
             let tick = tick(Duration::from_secs(2));
+
             for _tick in tick.iter() {
                 if exit.load(Ordering::Relaxed) {
                     info!("reader thread exiting...");
                     break;
                 }
+
+                info!("{}ms elapsed", now.elapsed().as_millis());
 
                 let keys: Vec<_> = store
                     .keys()
