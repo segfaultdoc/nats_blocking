@@ -1,0 +1,13 @@
+[package]
+name = "nats_blocking"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "3.1.12", features = ["derive", "env"] }
+crossbeam-channel = "0.5.6"
+env_logger = "0.9.1"
+log = "0.4.17"
+nats = "0.23.0"
+serde = "1.0.144"
+serde_yaml = "0.8.23"

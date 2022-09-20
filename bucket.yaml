@@ -1,0 +1,8 @@
+bucket: "test-bucket"
+description: "Test bucket"
+max_value_size: 64
+history: 1
+max_age_ms: 30000
+max_bytes: 320000
+storage_type: 1
+num_replicas: 1
