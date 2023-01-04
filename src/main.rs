@@ -34,7 +34,7 @@ fn main() {
     env_logger::init();
 
     let args: Args = Args::parse();
-    
+
     let writer_exit = Arc::new(AtomicBool::new(false));
     let store = setup(&args);
 
