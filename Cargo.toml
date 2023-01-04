@@ -8,6 +8,8 @@ clap = { version = "3.1.12", features = ["derive", "env"] }
 crossbeam-channel = "0.5.6"
 env_logger = "0.9.1"
 log = "0.4.17"
-nats = "0.23.0"
+#nats = "0.23"
+nats = "0.23"
+#nats = { git = "https://github.com/segfaultdoc/nats.rs.git", branch = "seg-v0.18.2" }
 serde = "1.0.144"
 serde_yaml = "0.8.23"

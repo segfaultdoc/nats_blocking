@@ -1,3 +1,8 @@
+/// Demonstrates an issue where stale connections are not properly handled
+/// by the Watch handle. This manifests when one process/thread subscribes
+/// to a KV store's watch events, while another process deletes the store
+/// which then leads to the original KV store connection no longer receiving
+/// watch events.
 use clap::Parser;
 use crossbeam_channel::tick;
 use log::*;
@@ -23,33 +28,40 @@ struct Args {
 
     #[clap(long, env)]
     nats_url: String,
-
-    #[clap(long, env, default_value_t = 1800)]
-    test_duration_secs: u64,
 }
 
 fn main() {
     env_logger::init();
 
     let args: Args = Args::parse();
-
-    let exit = Arc::new(AtomicBool::new(false));
+    
+    let writer_exit = Arc::new(AtomicBool::new(false));
     let store = setup(&args);
 
-    let reader_thread = spawn_reader(store.clone(), exit.clone());
-    let writer_thread = spawn_writer(store, exit.clone());
+    let reader_thread = spawn_reader(store.clone());
+    let _writer_thread = spawn_writer(store.clone(), writer_exit.clone());
 
-    sleep(Duration::from_secs(args.test_duration_secs));
+    sleep(Duration::from_secs(5));
+    writer_exit.store(true, Ordering::Relaxed);
 
-    info!("exiting...");
-    exit.store(true, Ordering::Relaxed);
+    sleep(Duration::from_secs(1));
+
+    // This deletes the bucket causing the spawn_reader to hang on call to next().
+    delete_bucket(&args.nats_url, store.bucket());
+
+    // Recreating the bucket doesn't resolve the issue.
+    let _ = setup(&args);
+
+    writer_exit.store(false, Ordering::Relaxed);
+    let writer_thread = spawn_writer(store.clone(), writer_exit.clone());
+
+    sleep(Duration::from_secs(10));
 
     reader_thread.join().unwrap();
     writer_thread.join().unwrap();
 }
 
-/// Writes to values to the KV store, then continuously updates one KV pair
-/// to prevent it from being purged due to TTL, while letting the other TTL.
+/// Continuously write values to the store.
 fn spawn_writer(store: Arc<Store>, exit: Arc<AtomicBool>) -> JoinHandle<()> {
     Builder::new()
         .name("writer-thread".to_string())
@@ -57,44 +69,30 @@ fn spawn_writer(store: Arc<Store>, exit: Arc<AtomicBool>) -> JoinHandle<()> {
             let (key_0, value_0): (&str, &str) = ("key-0", "val-0");
             let (key_1, value_1): (&str, &str) = ("key-1", "val-1");
 
-            store.put(key_0, value_0).unwrap();
-            store.put(key_1, value_1).unwrap();
-
             let tick = tick(Duration::from_millis(800));
             for _tick in tick.iter() {
                 if exit.load(Ordering::Relaxed) {
                     info!("writer thread exiting...");
                     break;
                 }
+                info!("writing");
                 store.put(key_0, value_0).unwrap();
+                store.put(key_1, value_1).unwrap();
             }
         })
         .unwrap()
 }
 
-/// Calls `keys` on the KV store every 2 seconds.
-fn spawn_reader(store: Arc<Store>, exit: Arc<AtomicBool>) -> JoinHandle<()> {
+/// Subscribes to watch events.
+fn spawn_reader(store: Arc<Store>) -> JoinHandle<()> {
     Builder::new()
         .name("reader-thread".to_string())
         .spawn(move || {
-            let now = std::time::Instant::now();
-            let tick = tick(Duration::from_secs(2));
-
-            for _tick in tick.iter() {
-                if exit.load(Ordering::Relaxed) {
-                    info!("reader thread exiting...");
-                    break;
-                }
-
-                info!("{}ms elapsed", now.elapsed().as_millis());
-
-                let keys: Vec<_> = store
-                    .keys()
-                    .unwrap()
-                    .into_iter()
-                    .map(Into::<String>::into)
-                    .collect();
-                info!("found {} values", keys.len());
+            let mut watch = store.watch_all().expect("error calling watch_all");
+            loop {
+                info!("next...");
+                let _e = watch.next().unwrap();
+                info!("received entry");
             }
         })
         .unwrap()
@@ -116,6 +114,13 @@ fn read_bucket_config(path: String, expected_bucket_name: String) -> JetStreamBu
     assert_eq!(config.bucket, expected_bucket_name);
 
     config
+}
+
+fn delete_bucket(nats_url: &str, bucket: &str) {
+    let conn = nats::connect(nats_url).expect("failed to connect to nats");
+    let js = JetStream::new(conn, Default::default());
+    js.delete_key_value(bucket)
+        .expect("failed to delete bucket");
 }
 
 /// Create a JetStream bucket.
